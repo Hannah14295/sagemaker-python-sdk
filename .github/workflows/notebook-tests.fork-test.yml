@@ -72,7 +72,7 @@ jobs:
           BUILD_ID=$(aws codebuild start-build \
             --project-name "$PROJECT" \
             --secondary-sources-override "[{\"type\":\"GITHUB\",\"location\":\"https://github.com/${FORK_REPO}.git\",\"sourceIdentifier\":\"sdk\"}]" \
-            --secondary-sources-version-override "sourceIdentifier=sdk,sourceVersion=${SDK_VERSION}" \
+            --secondary-sources-version-override "[{\"sourceIdentifier\":\"sdk\",\"sourceVersion\":\"${SDK_VERSION}\"}]" \
             --environment-variables-override \
               "name=TEST_MODE,value=pr_check,type=PLAINTEXT" \
               "name=PR_NUMBER,value=${PR_NUMBER},type=PLAINTEXT" \
