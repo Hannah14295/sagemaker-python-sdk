@@ -1,0 +1,95 @@
+name: Notebook Tests (FORK TEST)
+
+# ===========================================================================
+# TEST-ONLY workflow for iterating in the personal fork
+# hannah14295/sagemaker-python-sdk WITHOUT aws/sagemaker-python-sdk maintainer
+# approvals. Copy to .github/workflows/ in YOUR FORK (not the real repo).
+#
+# It differs from the real notebook-tests.yml in two ways, both only because
+# the shared CodeBuild project's 'sdk' secondary source still points at aws/:
+#   1. It OVERRIDES the 'sdk' secondary source to this fork at build start, so
+#      the build checks out and tests THIS fork PR's notebooks.
+#   2. It drops the collaborator/approval gate (you own this fork), so the only
+#      repo secret you need is the role ARN.
+# The REAL workflow keeps the gate and does NOT override the source location.
+#
+# Prerequisites (all in YOUR FORK's settings + one shared-account deploy):
+#   - Fork secret NOTEBOOK_TEST_ENGINE_ROLE_ARN =
+#       arn:aws:iam::674622101542:role/NotebookTestEngine-GithubActionsRole
+#   - The role's trust must temporarily include repo:hannah14295/sagemaker-
+#     python-sdk:* -- that is the TEST-ONLY CDK change on the engine-edits
+#     branch; Hannah deploys it, and it is reverted before launch.
+#     See FORK-TEST-RUNBOOK.md.
+# ===========================================================================
+
+on:
+  pull_request:
+    branches: [master]
+    paths: ['v3-examples/**']
+  # Manual re-trigger without opening a new PR each iteration.
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number in this fork'
+        required: true
+      pr_sha:
+        description: 'Head commit SHA to test'
+        required: true
+
+concurrency:
+  group: nte-fork-test-${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  notebook-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.NOTEBOOK_TEST_ENGINE_ROLE_ARN }}
+          aws-region: us-west-2
+          role-duration-seconds: 21600
+
+      - name: Start CodeBuild against this fork's PR and wait
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha || github.event.inputs.pr_sha }}
+          FORK_REPO: ${{ github.repository }}   # e.g. hannah14295/sagemaker-python-sdk
+        run: |
+          set -euo pipefail
+          PROJECT=notebook-test-engine
+          # The PR lives in THIS fork, so refs/pull/<N>/head resolves in the fork;
+          # ^{<sha>} pins the exact commit. We also repoint the 'sdk' secondary
+          # source to the fork for THIS build only (project default stays aws/).
+          SDK_VERSION="refs/pull/${PR_NUMBER}/head^{${PR_SHA}}"
+
+          BUILD_ID=$(aws codebuild start-build \
+            --project-name "$PROJECT" \
+            --secondary-sources-override "[{\"type\":\"GITHUB\",\"location\":\"https://github.com/${FORK_REPO}.git\",\"sourceIdentifier\":\"sdk\"}]" \
+            --secondary-sources-version-override "sourceIdentifier=sdk,sourceVersion=${SDK_VERSION}" \
+            --environment-variables-override \
+              "name=TEST_MODE,value=pr_check,type=PLAINTEXT" \
+              "name=PR_NUMBER,value=${PR_NUMBER},type=PLAINTEXT" \
+              "name=PR_SHA,value=${PR_SHA},type=PLAINTEXT" \
+              "name=PR_REPO_FULL,value=${FORK_REPO},type=PLAINTEXT" \
+            --query 'build.id' --output text)
+
+          echo "Started build: $BUILD_ID"
+          echo "Log: https://us-west-2.console.aws.amazon.com/codesuite/codebuild/674622101542/projects/${PROJECT}/build/${BUILD_ID//:/%3A}"
+
+          STATUS=IN_PROGRESS
+          while [ "$STATUS" = "IN_PROGRESS" ]; do
+            sleep 30
+            STATUS=$(aws codebuild batch-get-builds --ids "$BUILD_ID" \
+              --query 'builds[0].buildStatus' --output text)
+            echo "Build status: $STATUS"
+          done
+
+          echo "Final build status: $STATUS"
+          [ "$STATUS" = "SUCCEEDED" ]
