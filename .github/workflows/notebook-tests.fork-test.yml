@@ -97,10 +97,15 @@ jobs:
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
 
           # On any non-success, pull the engine-rendered failing-notebook HTML/ipynb
-          # (written under pr/<PR#>/) so the next step can attach it to this run.
+          # (written under pr/<PR#>/<run_ts>/) so the next step can attach it to this run.
           if [ "$STATUS" != "SUCCEEDED" ]; then
-            echo "Build did not succeed; fetching failing-notebook artifacts..."
-            aws s3 cp --recursive "s3://${PR_ARTIFACTS_BUCKET}/pr/${PR_NUMBER}/" pr-artifacts/ || true
+            echo "Build did not succeed; fetching this run's failing-notebook artifacts..."
+            # Only the NEWEST run-timestamp folder -- not every historical render for
+            # this PR -- so the artifact holds just this run's notebook(s).
+            LATEST=$(aws s3 ls "s3://${PR_ARTIFACTS_BUCKET}/pr/${PR_NUMBER}/" 2>/dev/null | awk '{print $NF}' | grep '/$' | sort | tail -1 || true)
+            if [ -n "$LATEST" ]; then
+              aws s3 cp --recursive "s3://${PR_ARTIFACTS_BUCKET}/pr/${PR_NUMBER}/${LATEST}" pr-artifacts/ || true
+            fi
           fi
 
       - name: Upload failing notebook(s)
