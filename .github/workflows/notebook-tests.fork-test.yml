@@ -87,7 +87,7 @@ jobs:
 
           STATUS=IN_PROGRESS
           while [ "$STATUS" = "IN_PROGRESS" ]; do
-            sleep 30
+            sleep 300
             STATUS=$(aws codebuild batch-get-builds --ids "$BUILD_ID" \
               --query 'builds[0].buildStatus' --output text)
             echo "Build status: $STATUS"
