@@ -57,10 +57,12 @@ jobs:
           role-duration-seconds: 21600
 
       - name: Start CodeBuild against this fork's PR and wait
+        id: build
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
           PR_SHA: ${{ github.event.pull_request.head.sha || github.event.inputs.pr_sha }}
           FORK_REPO: ${{ github.repository }}   # e.g. hannah14295/sagemaker-python-sdk
+          PR_ARTIFACTS_BUCKET: notebook-test-engine-pr-674622101542-us-west-2
         run: |
           set -euo pipefail
           PROJECT=notebook-test-engine
@@ -92,4 +94,25 @@ jobs:
           done
 
           echo "Final build status: $STATUS"
-          [ "$STATUS" = "SUCCEEDED" ]
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+          # On any non-success, pull the engine-rendered failing-notebook HTML/ipynb
+          # (written under pr/<PR#>/) so the next step can attach it to this run.
+          if [ "$STATUS" != "SUCCEEDED" ]; then
+            echo "Build did not succeed; fetching failing-notebook artifacts..."
+            aws s3 cp --recursive "s3://${PR_ARTIFACTS_BUCKET}/pr/${PR_NUMBER}/" pr-artifacts/ || true
+          fi
+
+      - name: Upload failing notebook(s)
+        if: steps.build.outputs.status != 'SUCCEEDED'
+        uses: actions/upload-artifact@v4
+        with:
+          name: failing-notebooks
+          path: pr-artifacts/
+          if-no-files-found: ignore
+
+      - name: Reflect build result as the check
+        if: always()
+        run: |
+          echo "CodeBuild final status: ${{ steps.build.outputs.status }}"
+          [ "${{ steps.build.outputs.status }}" = "SUCCEEDED" ]
